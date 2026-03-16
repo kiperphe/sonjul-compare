@@ -35,6 +35,13 @@
         button:hover {
             background-color: #004494;
         }
+        #exportBtn {
+            background-color: #28a745;
+            margin-left: 10px;
+        }
+        #exportBtn:hover {
+            background-color: #218838;
+        }
         .result-container {
             display: flex;
             flex-wrap: wrap;
@@ -81,7 +88,10 @@
             <input type="file" id="fileInput2" multiple accept=".csv, .xlsx, .xls">
             <small style="color:gray;">* 여러 파일을 한 번에 선택할 수 있습니다.</small>
         </div>
-        <button onclick="analyzeFiles()">분석 실행</button>
+        <div>
+            <button onclick="analyzeFiles()">분석 실행</button>
+            <button id="exportBtn" onclick="exportToExcel()" style="display: none;">엑셀로 다운로드</button>
+        </div>
     </div>
 
     <div id="results" class="result-container" style="display: none;">
@@ -104,7 +114,11 @@
     </div>
 
     <script>
-        // 파일을 ArrayBuffer로 읽어오는 함수
+        let globalDataBoth = [];
+        let globalDataFirst = [];
+        let globalDataSecond = [];
+        let globalDataNone = [];
+
         function readFile(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -114,21 +128,17 @@
             });
         }
 
-        // 파일들을 순회하며 그룹별 누적 손절횟수를 계산하는 함수
         async function parseFilesAndSumLoss(files) {
             const groupCounts = {};
 
             for (let file of files) {
                 const data = await readFile(file);
-                // SheetJS를 이용해 엑셀/CSV 파싱
                 const workbook = XLSX.read(data, { type: 'array' });
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
                 
-                // 2차원 배열 형태로 시트 데이터 가져오기
                 const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                 
-                // 상단은 요약이므로 "Group Name"이 있는 헤더 행을 찾습니다.
                 let headerRowIdx = -1;
                 for (let i = 0; i < Math.min(jsonData.length, 20); i++) {
                     if (jsonData[i] && jsonData[i].includes("Group Name")) {
@@ -137,7 +147,6 @@
                     }
                 }
 
-                // 예상되는 헤더 포맷이 없는 경우 패스
                 if (headerRowIdx === -1) continue;
 
                 const headerRow = jsonData[headerRowIdx];
@@ -146,11 +155,8 @@
 
                 if (groupIdx === -1 || lossIdx === -1) continue;
 
-                // 헤더 행 다음(5행 아래)부터 개별 그룹 데이터로 간주
                 for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
                     const row = jsonData[i];
-                    
-                    // 빈 행이거나 그룹명이 없으면 패스
                     if (!row || row.length === 0 || !row[groupIdx]) continue;
 
                     const groupName = row[groupIdx].toString().trim();
@@ -159,14 +165,12 @@
                     if (!groupCounts[groupName]) {
                         groupCounts[groupName] = 0;
                     }
-                    // 손절 횟수 누적
                     groupCounts[groupName] += lossCount;
                 }
             }
             return groupCounts;
         }
 
-        // 메인 분석 실행 함수
         async function analyzeFiles() {
             const files1 = document.getElementById('fileInput1').files;
             const files2 = document.getElementById('fileInput2').files;
@@ -177,19 +181,16 @@
             }
 
             try {
-                // 각각의 입력칸에서 파일 데이터를 집계
                 const counts1 = await parseFilesAndSumLoss(files1);
                 const counts2 = await parseFilesAndSumLoss(files2);
 
-                // 두 데이터셋에 존재하는 모든 그룹명 수집
                 const allGroups = new Set([...Object.keys(counts1), ...Object.keys(counts2)]);
 
-                const categoryBoth = [];
-                const categoryFirstOnly = [];
-                const categorySecondOnly = [];
-                const categoryNone = [];
+                globalDataBoth = [];
+                globalDataFirst = [];
+                globalDataSecond = [];
+                globalDataNone = [];
 
-                // 분류 로직
                 allGroups.forEach(group => {
                     const c1 = counts1[group] || 0;
                     const c2 = counts2[group] || 0;
@@ -198,23 +199,23 @@
                     const isC2Positive = c2 > 0;
 
                     if (isC1Positive && isC2Positive) {
-                        categoryBoth.push({ name: group, val1: c1, val2: c2 });
+                        globalDataBoth.push({ name: group, val1: c1, val2: c2 });
                     } else if (isC1Positive && !isC2Positive) {
-                        categoryFirstOnly.push({ name: group, val1: c1, val2: c2 });
+                        globalDataFirst.push({ name: group, val1: c1, val2: c2 });
                     } else if (!isC1Positive && isC2Positive) {
-                        categorySecondOnly.push({ name: group, val1: c1, val2: c2 });
+                        globalDataSecond.push({ name: group, val1: c1, val2: c2 });
                     } else {
-                        categoryNone.push({ name: group, val1: c1, val2: c2 });
+                        globalDataNone.push({ name: group, val1: c1, val2: c2 });
                     }
                 });
 
-                // 화면에 결과 렌더링
-                renderList('list-both', 'count-both', categoryBoth);
-                renderList('list-first', 'count-first', categoryFirstOnly);
-                renderList('list-second', 'count-second', categorySecondOnly);
-                renderList('list-none', 'count-none', categoryNone);
+                renderList('list-both', 'count-both', globalDataBoth);
+                renderList('list-first', 'count-first', globalDataFirst);
+                renderList('list-second', 'count-second', globalDataSecond);
+                renderList('list-none', 'count-none', globalDataNone);
 
                 document.getElementById('results').style.display = 'flex';
+                document.getElementById('exportBtn').style.display = 'inline-block';
 
             } catch (error) {
                 console.error(error);
@@ -222,12 +223,11 @@
             }
         }
 
-        // 결과를 HTML 리스트로 출력하는 헬퍼 함수
         function renderList(elementId, countId, dataArray) {
             const ul = document.getElementById(elementId);
             const countSpan = document.getElementById(countId);
             
-            ul.innerHTML = ''; // 초기화
+            ul.innerHTML = ''; 
             countSpan.textContent = `(${dataArray.length}건)`;
 
             if (dataArray.length === 0) {
@@ -237,10 +237,107 @@
 
             dataArray.forEach(item => {
                 const li = document.createElement('li');
-                // 누적 데이터 표시 형식: 그룹명 (전자 손절합: X, 후자 손절합: Y)
                 li.innerHTML = `<strong>${item.name}</strong> <span style="font-size:14px; color:gray;">(전자: ${item.val1}, 후자: ${item.val2})</span>`;
                 ul.appendChild(li);
             });
+        }
+
+        // --- 수정된 한 시트에 띄워쓰기 엑셀 내보내기 로직 ---
+        function exportToExcel() {
+            // 제일 데이터가 많은 그룹의 행 갯수 계산
+            const maxRows = Math.max(
+                globalDataBoth.length, 
+                globalDataFirst.length, 
+                globalDataSecond.length, 
+                globalDataNone.length
+            );
+
+            // 엑셀 시트에 들어갈 2차원 배열 (행렬 구조)
+            const aoa = [];
+
+            // 1행: 타이틀
+            aoa.push([
+                "1. 교집합 (전자 O, 후자 O)", "", "", "", "", // 빈칸 2개 포함 (열 2개 띄우기)
+                "2. 전자만 양수 (전자 O, 후자 X)", "", "", "", "",
+                "3. 후자만 양수 (전자 X, 후자 O)", "", "", "", "",
+                "4. 둘 다 양수 아님 (전자 X, 후자 X)", "", ""
+            ]);
+
+            // 2행: 헤더
+            const headers = ["Group Name", "전자 누적", "후자 누적"];
+            const gap = ["", ""]; // 열 2개 띄우기용 공백
+            
+            aoa.push([
+                ...headers, ...gap,
+                ...headers, ...gap,
+                ...headers, ...gap,
+                ...headers
+            ]);
+
+            // 3행 ~ N행: 실제 데이터 병합
+            for (let i = 0; i < maxRows; i++) {
+                const row = [];
+
+                // 1. 교집합 데이터 추가
+                if (i < globalDataBoth.length) {
+                    row.push(globalDataBoth[i].name, globalDataBoth[i].val1, globalDataBoth[i].val2);
+                } else {
+                    row.push("", "", "");
+                }
+                row.push("", ""); // 간격
+
+                // 2. 전자만 양수 데이터 추가
+                if (i < globalDataFirst.length) {
+                    row.push(globalDataFirst[i].name, globalDataFirst[i].val1, globalDataFirst[i].val2);
+                } else {
+                    row.push("", "", "");
+                }
+                row.push("", ""); // 간격
+
+                // 3. 후자만 양수 데이터 추가
+                if (i < globalDataSecond.length) {
+                    row.push(globalDataSecond[i].name, globalDataSecond[i].val1, globalDataSecond[i].val2);
+                } else {
+                    row.push("", "", "");
+                }
+                row.push("", ""); // 간격
+
+                // 4. 둘 다 아님 데이터 추가
+                if (i < globalDataNone.length) {
+                    row.push(globalDataNone[i].name, globalDataNone[i].val1, globalDataNone[i].val2);
+                } else {
+                    row.push("", "", "");
+                }
+
+                aoa.push(row);
+            }
+
+            // 배열을 시트 객체로 변환
+            const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+
+            // 열 너비 동적 계산 (가장 긴 그룹명 길이에 맞춤)
+            const getGroupColWidth = (dataList) => {
+                const maxLen = Math.max(...dataList.map(item => (item.name || '').length));
+                return Math.max(22, maxLen + 5); // 최소 22칸 보장
+            };
+
+            const w1 = getGroupColWidth(globalDataBoth);
+            const w2 = getGroupColWidth(globalDataFirst);
+            const w3 = getGroupColWidth(globalDataSecond);
+            const w4 = getGroupColWidth(globalDataNone);
+
+            // 열 너비 세팅
+            worksheet['!cols'] = [
+                { wch: w1 }, { wch: 12 }, { wch: 12 }, { wch: 4 }, { wch: 4 }, // 1섹션 + 간격
+                { wch: w2 }, { wch: 12 }, { wch: 12 }, { wch: 4 }, { wch: 4 }, // 2섹션 + 간격
+                { wch: w3 }, { wch: 12 }, { wch: 12 }, { wch: 4 }, { wch: 4 }, // 3섹션 + 간격
+                { wch: w4 }, { wch: 12 }, { wch: 12 }                          // 4섹션
+            ];
+
+            // 워크북 생성 및 시트 추가 후 다운로드
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "통합결과");
+            XLSX.writeFile(workbook, "누적손절횟수_통합결과.xlsx");
         }
     </script>
 </body>
