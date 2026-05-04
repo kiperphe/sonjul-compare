@@ -3,60 +3,375 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BTCUSDT Chart</title>
+  <title>BTCUSDT UT Bot Chart</title>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      background: #0f172a;
-      color: white;
+      background: #0b1220;
+      color: #e5e7eb;
       font-family: Arial, sans-serif;
     }
 
     header {
-      padding: 20px;
-      text-align: center;
-      font-size: 24px;
-      font-weight: bold;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
     }
 
-    .chart-box {
+    .title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    select,
+    input,
+    button {
+      background: #020617;
+      color: #e5e7eb;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      padding: 7px 9px;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1f2937;
+    }
+
+    #status {
+      padding: 8px 18px;
+      font-size: 13px;
+      color: #9ca3af;
+      background: #020617;
+      border-bottom: 1px solid #1f2937;
+    }
+
+    #chart {
       width: 100%;
-      height: 85vh;
+      height: calc(100vh - 94px);
+    }
+
+    .green {
+      color: #22c55e;
+    }
+
+    .red {
+      color: #ef4444;
     }
   </style>
 </head>
 
 <body>
-  <header>BTCUSDT TradingView Chart</header>
+  <header>
+    <div class="title">BTCUSDT · Gate.io · UT Bot Alerts</div>
 
-  <div class="chart-box">
-    <div class="tradingview-widget-container" style="height:100%;width:100%">
-      <div id="tradingview_chart" style="height:100%;width:100%"></div>
+    <div class="controls">
+      <label>
+        봉:
+        <select id="interval">
+          <option value="15m">15분</option>
+          <option value="30m">30분</option>
+          <option value="1h" selected>1시간</option>
+          <option value="4h">4시간</option>
+          <option value="1d">1일</option>
+        </select>
+      </label>
 
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-        new TradingView.widget({
-          container_id: "tradingview_chart",
-          width: "100%",
-          height: "100%",
-          symbol: "GATE:BTCUSDT",
-          interval: "60",
-          timezone: "Asia/Seoul",
-          theme: "dark",
-          style: "1",
-          locale: "kr",
-          toolbar_bg: "#0f172a",
-          enable_publishing: false,
-          allow_symbol_change: true,
-          hide_side_toolbar: false,
-          withdateranges: true,
-          details: true,
-          hotlist: true,
-          calendar: true
-        });
-      </script>
+      <label>
+        Key:
+        <input id="keyValue" type="number" value="1" step="0.1" min="0.1" style="width:70px;" />
+      </label>
+
+      <label>
+        ATR:
+        <input id="atrPeriod" type="number" value="10" step="1" min="1" style="width:70px;" />
+      </label>
+
+      <button onclick="loadChart()">새로고침</button>
     </div>
-  </div>
+  </header>
+
+  <div id="status">데이터 불러오는 중...</div>
+  <div id="chart"></div>
+
+  <script>
+    const chartEl = document.getElementById("chart");
+    const statusEl = document.getElementById("status");
+
+    let chart;
+    let candleSeries;
+    let trailSeries;
+    let volumeSeries;
+
+    function createNewChart() {
+      chartEl.innerHTML = "";
+
+      chart = LightweightCharts.createChart(chartEl, {
+        layout: {
+          background: { color: "#0b1220" },
+          textColor: "#d1d5db",
+        },
+        grid: {
+          vertLines: { color: "#1f2937" },
+          horzLines: { color: "#1f2937" },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: "#374151",
+        },
+        timeScale: {
+          borderColor: "#374151",
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: "#00b894",
+        downColor: "#ff4d4d",
+        borderUpColor: "#00b894",
+        borderDownColor: "#ff4d4d",
+        wickUpColor: "#00b894",
+        wickDownColor: "#ff4d4d",
+      });
+
+      trailSeries = chart.addLineSeries({
+        color: "#facc15",
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+
+      volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "",
+      });
+
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.82,
+          bottom: 0,
+        },
+      });
+
+      window.addEventListener("resize", () => {
+        chart.applyOptions({
+          width: chartEl.clientWidth,
+          height: chartEl.clientHeight,
+        });
+      });
+    }
+
+    async function fetchGateCandles(interval) {
+      const url =
+        `https://api.gateio.ws/api/v4/spot/candlesticks` +
+        `?currency_pair=BTC_USDT&interval=${interval}&limit=500`;
+
+      const res = await fetch(url);
+
+      if (!res.ok) {
+        throw new Error("Gate.io API 응답 실패");
+      }
+
+      const raw = await res.json();
+
+      raw.sort((a, b) => Number(a[0]) - Number(b[0]));
+
+      return raw.map(k => ({
+        time: Number(k[0]),
+        volume: Number(k[1]),
+        close: Number(k[2]),
+        high: Number(k[3]),
+        low: Number(k[4]),
+        open: Number(k[5]),
+      }));
+    }
+
+    function trueRange(candle, prevClose) {
+      if (prevClose === null) {
+        return candle.high - candle.low;
+      }
+
+      return Math.max(
+        candle.high - candle.low,
+        Math.abs(candle.high - prevClose),
+        Math.abs(candle.low - prevClose)
+      );
+    }
+
+    function rma(values, length) {
+      const result = Array(values.length).fill(null);
+      let sum = 0;
+
+      for (let i = 0; i < values.length; i++) {
+        if (i < length) {
+          sum += values[i];
+
+          if (i === length - 1) {
+            result[i] = sum / length;
+          }
+        } else {
+          result[i] = (result[i - 1] * (length - 1) + values[i]) / length;
+        }
+      }
+
+      return result;
+    }
+
+    function calculateUTBot(candles, keyValue, atrPeriod) {
+      const tr = candles.map((c, i) => {
+        const prevClose = i === 0 ? null : candles[i - 1].close;
+        return trueRange(c, prevClose);
+      });
+
+      const atr = rma(tr, atrPeriod);
+      const stop = Array(candles.length).fill(null);
+      const markers = [];
+
+      for (let i = 0; i < candles.length; i++) {
+        if (atr[i] === null) continue;
+
+        const src = candles[i].close;
+        const prevSrc = i > 0 ? candles[i - 1].close : src;
+        const prevStop = i > 0 && stop[i - 1] !== null ? stop[i - 1] : 0;
+        const nLoss = keyValue * atr[i];
+
+        if (src > prevStop && prevSrc > prevStop) {
+          stop[i] = Math.max(prevStop, src - nLoss);
+        } else if (src < prevStop && prevSrc < prevStop) {
+          stop[i] = Math.min(prevStop, src + nLoss);
+        } else if (src > prevStop) {
+          stop[i] = src - nLoss;
+        } else {
+          stop[i] = src + nLoss;
+        }
+
+        if (i > 0 && stop[i - 1] !== null) {
+          const crossedAbove =
+            prevSrc <= stop[i - 1] &&
+            src > stop[i];
+
+          const crossedBelow =
+            stop[i - 1] <= prevSrc &&
+            stop[i] > src;
+
+          const buy = src > stop[i] && crossedAbove;
+          const sell = src < stop[i] && crossedBelow;
+
+          if (buy) {
+            markers.push({
+              time: candles[i].time,
+              position: "belowBar",
+              color: "#22c55e",
+              shape: "arrowUp",
+              text: "BUY",
+            });
+          }
+
+          if (sell) {
+            markers.push({
+              time: candles[i].time,
+              position: "aboveBar",
+              color: "#ef4444",
+              shape: "arrowDown",
+              text: "SELL",
+            });
+          }
+        }
+      }
+
+      const trail = candles
+        .map((c, i) => {
+          if (stop[i] === null) return null;
+          return {
+            time: c.time,
+            value: stop[i],
+          };
+        })
+        .filter(Boolean);
+
+      return { trail, markers };
+    }
+
+    async function loadChart() {
+      try {
+        statusEl.textContent = "데이터 불러오는 중...";
+
+        const interval = document.getElementById("interval").value;
+        const keyValue = Number(document.getElementById("keyValue").value);
+        const atrPeriod = Number(document.getElementById("atrPeriod").value);
+
+        const candles = await fetchGateCandles(interval);
+        const ut = calculateUTBot(candles, keyValue, atrPeriod);
+
+        createNewChart();
+
+        const candleData = candles.map(c => ({
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }));
+
+        const volumeData = candles.map(c => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open
+            ? "rgba(34, 197, 94, 0.35)"
+            : "rgba(239, 68, 68, 0.35)",
+        }));
+
+        candleSeries.setData(candleData);
+        trailSeries.setData(ut.trail);
+        volumeSeries.setData(volumeData);
+        candleSeries.setMarkers(ut.markers);
+
+        chart.timeScale().fitContent();
+
+        const last = candles[candles.length - 1];
+        const lastSignal = ut.markers[ut.markers.length - 1];
+
+        statusEl.innerHTML =
+          `현재가: <b>${last.close.toLocaleString()}</b> USDT · ` +
+          `봉: ${interval} · ` +
+          `UT Bot 신호 수: ${ut.markers.length}` +
+          (lastSignal
+            ? ` · 최근 신호: <b class="${lastSignal.text === "BUY" ? "green" : "red"}">${lastSignal.text}</b>`
+            : "");
+      } catch (err) {
+        statusEl.textContent = "오류: " + err.message;
+      }
+    }
+
+    loadChart();
+
+    setInterval(() => {
+      loadChart();
+    }, 60000);
+  </script>
 </body>
 </html>
